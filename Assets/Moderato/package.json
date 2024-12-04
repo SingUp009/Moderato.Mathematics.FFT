@@ -1,6 +1,6 @@
 {
-    "name": "com.singup_009.moderato.mathematics.burst-fft",
-    "displayName": "BurstFFT",
+    "name": "com.singup_009.moderato.mathematics.fft",
+    "displayName": "Moderato.Mathematics.FFT",
     "author": {
         "name": "SingUp_009",
         "email": "009singup@gmail.com"
