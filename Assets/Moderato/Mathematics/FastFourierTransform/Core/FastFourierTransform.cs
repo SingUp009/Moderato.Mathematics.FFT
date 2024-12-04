@@ -117,7 +117,7 @@ namespace Moderato.Mathematics
             int Length = source.Length;
             for (int i = 0; i < Length; i++)
             {
-                source[i] *= (1.0 - math.cos(TWO_PI * i / Length)) / 2;
+                source[i] *= (1.0 - math.cos(TWO_PI * i / Length)) / 2.0;
             }
         }
 
@@ -128,7 +128,7 @@ namespace Moderato.Mathematics
             {
                 double ratio = i / (double)Length;
                 source[i] *= 0.42
-                    - math.cos(TWO_PI * ratio) / 2
+                    - math.cos(TWO_PI * ratio) / 2.0
                     + math.mul(0.08, math.cos(FOUR_PI * ratio));
             }
         }

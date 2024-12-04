@@ -1,0 +1,17 @@
+{
+    "name": "com.singup_009.moderato.mathematics.burst-fft",
+    "displayName": "BurstFFT",
+    "author": {
+        "name": "SingUp_009",
+        "email": "009singup@gmail.com"
+    },
+    "version": "1.0.0",
+    "unity": "2018.4",
+    "description": "Fast Fourier Transform (FFT) in Unity using Burst Compiler & C# Job System.",
+    "dependencies": {
+        "com.unity.burst": "1.8.18",
+        "com.unity.collections": "2.5.1",
+        "com.unity.mathematics": "1.3.2"
+    },
+    "license": "MIT"
+}
