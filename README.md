@@ -77,7 +77,7 @@ Output Spectrum.
 UPM Package
 ---
 ## Install via git URL
-You can add `https://github.com/SingUp009/BurstFFT.git?path=Assets/Moderato` to Package Manager.
+You can add `https://github.com/SingUp009/Moderato.Mathematics.FFT.git?path=Assets/Moderato` to Package Manager.
 > Package Manager: Window -> Package Manager -> Add package from git URL...
 
 License
