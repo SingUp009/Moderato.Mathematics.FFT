@@ -28,7 +28,7 @@ namespace Moderato.Mathematics
         /// <returns>
         /// Output spectrum. The length of the array is half the next power of 2 of the input waveform.
         /// </returns>
-        public static Complex[] Transform(ReadOnlySpan<float> source, Window window = Window.Hamming, bool enableLowPassFilter = false, double threshold = 0d)
+        public static Complex[] Transform(ReadOnlySpan<float> source, Window window = Window.Rectangular, bool enableLowPassFilter = false, double threshold = 0d)
         {
             #region Null or Empty Check
             if (source == null) return null;
@@ -64,7 +64,7 @@ namespace Moderato.Mathematics
         /// <returns>
         /// Output spectrum. The length of the array is half the next power of 2 of the input waveform.
         /// </returns>
-        public static Complex[] Transform(ReadOnlySpan<double> source, Window window = Window.Hamming, bool enableLowPassFilter = false, double threshold = 0d)
+        public static Complex[] Transform(ReadOnlySpan<double> source, Window window = Window.Rectangular, bool enableLowPassFilter = false, double threshold = 0d)
         {
             #region Null or Empty Check
             if (source == null) return null;
@@ -100,7 +100,7 @@ namespace Moderato.Mathematics
         /// <returns>
         /// Output spectrum. The length of the array is half the next power of 2 of the input waveform.
         /// </returns>
-        public static Complex[] Transform(ReadOnlySpan<Complex> source, Window window = Window.Hamming, bool enableLowPassFilter = false, double threshold = 0d)
+        public static Complex[] Transform(ReadOnlySpan<Complex> source, Window window = Window.Rectangular, bool enableLowPassFilter = false, double threshold = 0d)
         {
             #region Null or Empty Check
             if (source == null) return null;
