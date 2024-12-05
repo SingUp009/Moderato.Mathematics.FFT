@@ -50,7 +50,7 @@ Window function.
   * BlackmanHarris: $W\[n] = 0.35875 - (0.48829 * \cos (2.0 * \pi * n / N)) + (0.14128 * \cos (4.0 * \pi * n / N)) - (0.01168 * \cos (6.0 * \pi * n / N))$.
 
 > [!NOTE]
-> Default is `Hamming`.
+> Default is `Rectangular`.
 ---
 ### enableLowPassFilter : **\[Optional]**
 `bool`<br>
