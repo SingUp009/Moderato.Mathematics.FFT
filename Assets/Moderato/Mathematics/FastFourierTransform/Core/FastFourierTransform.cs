@@ -51,7 +51,7 @@ namespace Moderato.Mathematics
         {
             NativeArray<Complex> source = new(Waveform.Length, Allocator.Temp);
             Aliasing.ExpectNotAliased(in Waveform, in source);
-            Waveform.AsReadOnlySpan().CopyTo(source);
+            Waveform.CopyTo(source);
 
             Windowing(Window, source);
 
@@ -108,7 +108,7 @@ namespace Moderato.Mathematics
             int Length = source.Length;
             for (int i = 0; i < Length; i++)
             {
-                source[i] *= 0.54 - math.mul(0.46, math.cos(TWO_PI * i / Length));
+                source[i] *= 0.54 - (0.46 * math.cos(TWO_PI * i / Length));
             }
         }
 
@@ -128,8 +128,8 @@ namespace Moderato.Mathematics
             {
                 double ratio = i / (double)Length;
                 source[i] *= 0.42
-                    - math.cos(TWO_PI * ratio) / 2.0
-                    + math.mul(0.08, math.cos(FOUR_PI * ratio));
+                    - (math.cos(TWO_PI * ratio) / 2.0)
+                    + (0.08 * math.cos(FOUR_PI * ratio));
             }
         }
 
@@ -140,14 +140,19 @@ namespace Moderato.Mathematics
             {
                 double ratio = i / (double)Length;
                 source[i] *= 0.35875
-                    - 0.48829 * math.cos(TWO_PI * ratio)
-                    + 0.14128 * math.cos(FOUR_PI * ratio)
-                    - 0.01168 * math.cos(SIX_PI * ratio);
+                    - (0.48829 * math.cos(TWO_PI * ratio))
+                    + (0.14128 * math.cos(FOUR_PI * ratio))
+                    - (0.01168 * math.cos(SIX_PI * ratio));
             }
         }
 
         #endregion
 
+        /// <summary>
+        /// Fast Fourier Transform.
+        /// </summary>
+        /// <param name="_source"></param>
+        /// <param name="_result"></param>
         [SkipLocalsInit]
         private readonly void FFT(NativeArray<Complex> _source, NativeArray<Complex> _result)
         {
@@ -179,12 +184,13 @@ namespace Moderato.Mathematics
             for (int s = 1; s <= Log2Length; s++)
             {
                 int l = 1 << s;
-                Complex wn = Complex.FromPolarCoordinates(1d, -TWO_PI / l);
+                Complex wn = Complex.FromPolarCoordinates(1.0, -TWO_PI / l);
+
+                int halfL = l / 2;
 
                 for (int k = 0; k < Length; k += l)
                 {
                     Complex w = Complex.One;
-                    int halfL = l / 2;
 
                     for (int j = 0; j < halfL; j++)
                     {
@@ -203,33 +209,36 @@ namespace Moderato.Mathematics
 
                 _Spectrum.CopyTo(_rev);
             }
-            
-            int nyquist = Length / 2;
-            double normarization = 2.0 / Length;
-            Span<Complex> _spectrum = Spectrum[..nyquist];
-            
-            // Normalize
-            for (int i = 0; i < nyquist; i++)
-            {
-                result[i] = _spectrum[i] * normarization;
-            }
 
-            // Low-pass filter
+            int nyquist = Length / 2;
+
+            double threshold = default;
+
+            // Low-pass filter threshold
             if (EnableLowPassFilter)
             {
-                double max = default;
+                double max = double.MinValue;
                 for (int i = 0; i < nyquist; i++)
                 {
                     max = math.max(max, result[i].Magnitude);
                 }
 
-                double threshold = max * Threshold;
-                for (int i = 0; i < nyquist; i++)
-                {
-                    Complex value = result[i];
+                threshold = max * Threshold;
+            }
 
-                    result[i] = value.Magnitude >= threshold ? value : Complex.Zero;
-                }
+            double normarization = 2.0 / Length;
+            Span<Complex> _spectrum = Spectrum[..nyquist];
+
+            // Normalization and Low-pass filter
+            for (int i = 0; i < nyquist; i++)
+            {
+                Complex value = _spectrum[i] * normarization;
+
+                result[i] = EnableLowPassFilter switch
+                {
+                    true => value.Magnitude >= threshold ? value : Complex.Zero,
+                    false => value
+                };
             }
 
             _rev.Dispose();
