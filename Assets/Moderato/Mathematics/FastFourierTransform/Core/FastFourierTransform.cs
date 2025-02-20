@@ -220,13 +220,13 @@ namespace Moderato.Mathematics
                 threshold = max * Threshold;
             }
 
-            double normarization = 2.0 / Length;
+            double normalization = 2.0 / Length;
             Span<Complex> _spectrum = Spectrum[..nyquist];
 
             // Normalization and Low-pass filter
             for (int i = 0; i < nyquist; i++)
             {
-                Complex value = _spectrum[i] * normarization;
+                Complex value = _spectrum[i] * normalization;
 
                 result[i] = EnableLowPassFilter switch
                 {
