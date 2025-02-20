@@ -40,7 +40,7 @@ namespace Moderato.Mathematics
         public double Threshold { get; set; }
 
         /// <summary>
-        /// Constant values of ƒÎ.
+        /// Constant values of PI.
         /// </summary>
         private const double TWO_PI = 2.0 * math.PI;
         private const double FOUR_PI = 4.0 * math.PI;
@@ -49,15 +49,13 @@ namespace Moderato.Mathematics
         [SkipLocalsInit]
         public void Execute()
         {
-            NativeArray<Complex> source = new(Waveform.Length, Allocator.Temp);
+            using NativeArray<Complex> source = new(Waveform.Length, Allocator.Temp);
             Aliasing.ExpectNotAliased(in Waveform, in source);
             Waveform.CopyTo(source);
 
             Windowing(Window, source);
 
             FFT(source, Result);
-
-            source.Dispose();
         }
 
         #region Windowing
@@ -151,15 +149,11 @@ namespace Moderato.Mathematics
         /// <summary>
         /// Fast Fourier Transform.
         /// </summary>
-        /// <param name="_source"></param>
-        /// <param name="_result"></param>
+        /// <param name="source"></param>
+        /// <param name="result"></param>
         [SkipLocalsInit]
-        private readonly void FFT(NativeArray<Complex> _source, NativeArray<Complex> _result)
+        private readonly void FFT(ReadOnlySpan<Complex> source, Span<Complex> result)
         {
-            ReadOnlySpan<Complex> source = _source.AsSpan();
-            Span<Complex> result = _result.AsSpan();
-            Aliasing.ExpectNotAliased(in _source, in _result);
-
             int Length = source.Length;
             Hint.Assume(Length > 0);
 
