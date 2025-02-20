@@ -8,7 +8,7 @@ using Unity.Jobs;
 
 namespace Moderato.Mathematics
 {
-    public static class FFT
+    public static partial class FFT
     {
         /// <summary>
         /// Fast Fourier Transform.
