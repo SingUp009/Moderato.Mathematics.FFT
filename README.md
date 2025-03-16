@@ -1,5 +1,7 @@
-Moderato.Mathematics.FFT
----
+![Moderato Logo - White](Images/Moderato_White.png)
+
+# Moderato.Mathematics.FFT
+
 Fast Fourier Transform (FFT) in Unity using Burst Compiler &amp; C# Job System.
 
 ## Table of Contents
