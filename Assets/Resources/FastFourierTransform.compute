@@ -1,0 +1,125 @@
+﻿// StockhamFFT_Tiled.compute
+// Radix-2 Stockham per-stage kernels with LDS tiling (safe & correct).
+// Key: write to idxD + Ns (Ns=2^s), not N/2. This preserves Stockham autosort.
+//
+// Kernels:
+//  - FFTStage     : generic per-stage fallback (no LDS)
+//  - FFTStageLDS  : per-stage tiled in LDS (groupshared), safe when TILE % (2^(s+1)) == 0
+
+#pragma kernel FFTStage
+#pragma kernel FFTStageLDS
+#pragma target 5.0
+
+#define THREADS 256
+#define TILE    1024
+
+inline float2 cadd(float2 a, float2 b){ return float2(a.x+b.x, a.y+b.y); }
+inline float2 csub(float2 a, float2 b){ return float2(a.x-b.x, a.y-b.y); }
+inline float2 cmul(float2 a, float2 b){ return float2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x); }
+
+RWStructuredBuffer<float2> Ping;
+RWStructuredBuffer<float2> Pong;
+StructuredBuffer<float2>   Twiddle; // length N/2: W_N^r = (cos, -sin)
+
+cbuffer FFTParams {
+    uint  N, BatchCount, Stages;
+    int   Direction;          // +1 forward, -1 inverse
+    uint  StageDynamic;       // s
+    uint  ApplyScaleDynamic;  // 1/N on last inverse stage
+    uint  ThreadCount;        // for grid-stride loop
+    float InvN;
+}
+
+// ---------- Fallback (no LDS) ----------
+[numthreads(THREADS,1,1)]
+void FFTStage(uint3 tid : SV_DispatchThreadID)
+{
+    const uint halfN = (N >> 1);
+    const uint total = BatchCount * halfN;
+    for (uint t = tid.x; t < total; t += ThreadCount)
+    {
+        const uint batch = t / halfN;
+        const uint j     = t - batch * halfN;        // 0..N/2-1
+
+        const uint Ns  = 1u << StageDynamic;         // 2^s
+        const uint N2  = Ns << 1;                    // 2^(s+1)
+        const uint k   = j & (Ns - 1u);              // j % Ns
+        const uint r   = k * (N / N2);               // twiddle index
+        const uint base = batch * N;
+
+        // Read across halves (Stockham load)
+        float2 a = Ping[base + j];
+        float2 b = Ping[base + j + halfN];
+
+        float2 w = Twiddle[r];
+        if (Direction < 0) w.y = -w.y;               // conjugate for inverse
+        float2 bw = cmul(b, w);
+
+        float2 S = cadd(a, bw);
+        float2 D = csub(a, bw);
+
+        if (ApplyScaleDynamic != 0 && Direction < 0) { S *= InvN; D *= InvN; }
+
+        // Write to expanded indices: idxD + r*Ns (r=0,1)  *** Ns, not N/2 ***
+        const uint g    = j >> StageDynamic;         // j / Ns
+        const uint idxD = base + g * N2 + k;
+        Pong[idxD]      = S;                         // r=0
+        Pong[idxD + Ns] = D;                         // r=1
+    }
+}
+
+// ---------- LDS-tiled (safe & correct) ----------
+groupshared float2 shA[TILE];
+groupshared float2 shB[TILE];
+
+[numthreads(THREADS,1,1)]
+void FFTStageLDS(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
+{
+    const uint halfN = (N >> 1);
+    const uint tilesPerBatch = (halfN + TILE - 1) / TILE;
+    const uint totalTiles    = tilesPerBatch * BatchCount;
+    const uint g             = gid.x;
+    if (g >= totalTiles) return;
+
+    const uint batch     = g / tilesPerBatch;
+    const uint tileIndex = g - batch * tilesPerBatch;
+    const uint jStart    = tileIndex * TILE;
+    const uint jEnd      = min(jStart + TILE, halfN);
+    const uint base      = batch * N;
+
+    // Early-out: we only run LDS when tile cleanly contains butterflies of this stage
+    const uint Ns = 1u << StageDynamic;
+    const uint N2 = Ns << 1;
+    if ((TILE % N2) != 0) return;
+
+    // Preload A(j) and B(j)=A(j+N/2)
+    for (uint j = jStart + tid.x; j < jEnd; j += THREADS) {
+        shA[j - jStart] = Ping[base + j];
+        shB[j - jStart] = Ping[base + j + halfN];
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    const uint  stride  = N / N2;
+    const bool  doScale = (ApplyScaleDynamic != 0 && Direction < 0);
+
+    for (uint j = jStart + tid.x; j < jEnd; j += THREADS)
+    {
+        const uint k = j & (Ns - 1u);
+        const uint r = k * stride;
+
+        float2 a = shA[j - jStart];
+        float2 b = shB[j - jStart];
+        float2 w = Twiddle[r];
+        if (Direction < 0) w.y = -w.y;
+
+        float2 bw = cmul(b, w);
+        float2 S  = cadd(a, bw);
+        float2 D  = csub(a, bw);
+        if (doScale) { S *= InvN; D *= InvN; }
+
+        const uint g2   = j >> StageDynamic;
+        const uint idxD = base + g2 * N2 + k;
+        Pong[idxD]      = S;
+        Pong[idxD + Ns] = D;
+    }
+}
