@@ -90,33 +90,49 @@ public static class CQTKernelPrecompute
                 coefs = new ComputeBuffer(B, sizeof(float) * 2),
             };
 
-            // Build kernels (time -> freq -> conjugate)
-            // For each bin in octave: time kernel length Nk, Hann windowed complex exponential,
-            // zero-pad to L, FFT, then conjugate spectrum.
             var H = new UnityEngine.Vector2[L * B];
 
             for (int b = 0; b < B; b++)
             {
                 int k = o * plan.binsPerOctave + b;
                 float fk = plan.fCenters[k];
-                int Nk = Mathf.CeilToInt(plan.Q * plan.sampleRate / fk);
-                Nk = Mathf.Min(Nk, L); // clamp
 
-                // time kernel with Hann
+                // Kernel length for this bin
+                int Nk = Mathf.CeilToInt(plan.Q * plan.sampleRate / fk);
+                Nk = Mathf.Clamp(Nk, 8, L);
+
+                // ---- Time-domain kernel (zero-phase centered) ----
+                // Build Hann-windowed complex exponential of length Nk,
+                // then circularly shift so its center is at index 0 in FFT input.
+                int m0 = (Nk - 1) / 2; // center
                 var time = new System.Numerics.Complex[L];
+                double tw = 2.0 * Math.PI * fk / plan.sampleRate;
+
+                // L2 energy accumulation for normalization
+                double e2 = 0.0;
+
                 for (int n = 0; n < Nk; n++)
                 {
-                    float w = 0.5f * (1f - Mathf.Cos(2f * Mathf.PI * n / (Nk - 1))); // Hann
-                    double phase = 2.0 * Math.PI * fk * n / plan.sampleRate;
-                    var c = new System.Numerics.Complex(Math.Cos(phase), Math.Sin(phase));
-                    time[n] = w * c / Nk; // normalize by Nk to keep amplitudes tame
+                    // Hann window
+                    float w = 0.5f * (1f - Mathf.Cos(2f * Mathf.PI * n / (Nk - 1)));
+                    var c = new System.Numerics.Complex(Math.Cos(tw * n), Math.Sin(tw * n));
+                    var g = w * c;
+                    e2 += (g.Real * g.Real + g.Imaginary * g.Imaginary);
+
+                    // zero-phase circular shift: put sample at (n - m0) mod L
+                    int idx = n - m0;
+                    if (idx < 0) idx += L;
+                    time[idx] = g;
                 }
-                for (int n = Nk; n < L; n++) time[n] = System.Numerics.Complex.Zero;
 
-                // FFT (CPU-side) just once at startup; L is modest (<= 8192 typically).
-                FFTInPlace(time); // Cooley–Tukey in C#, or call your CPU FFT if you have one
+                // L2 normalization to unit energy
+                double scale = 1.0 / Math.Sqrt(Math.Max(1e-20, e2));
+                for (int i = 0; i < L; i++) time[i] *= scale;
 
-                // Store conjugated spectrum into H
+                // ---- FFT (in place) ----
+                FFTInPlace(time, inverse: false);
+
+                // ---- Store conjugated spectrum for inner products ----
                 for (int f = 0; f < L; f++)
                 {
                     var v = System.Numerics.Complex.Conjugate(time[f]);
@@ -128,6 +144,7 @@ public static class CQTKernelPrecompute
             plan.okt[o] = ok;
         }
     }
+
 
     // ==== Utilities ====
 
