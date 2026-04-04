@@ -1,8 +1,8 @@
-using System.Collections;
+using Moderato.Mathematics;
 using NUnit.Framework;
+using System.Collections;
 using Unity.PerformanceTesting;
 using UnityEngine;
-using Moderato.Mathematics;
 
 public class FFTTest
 {
@@ -21,11 +21,12 @@ public class FFTTest
     }
 
     [Test, Performance]
-    public void Test()
+    public void CpuTest()
     {
         Measure.Method(() => FFT.Transform(data))
             .WarmupCount(10)
             .MeasurementCount(100)
             .Run();
     }
+
 }

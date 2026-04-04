@@ -1,0 +1,2 @@
+[0923/205039.468:ERROR:third_party\crashpad\crashpad\util\win\registration_protocol_win.cc:108] CreateFile: 指定されたファイルが見つかりません。 (0x2)
+[0923/205239.466:ERROR:third_party\crashpad\crashpad\util\win\registration_protocol_win.cc:108] CreateFile: 指定されたファイルが見つかりません。 (0x2)
