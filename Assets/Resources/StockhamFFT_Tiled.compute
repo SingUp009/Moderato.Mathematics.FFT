@@ -1,0 +1,229 @@
+// StockhamFFT_Tiled.compute
+// Radix-2 Stockham auto-sort FFT (forward/inverse), with and without LDS tiling.
+// - Two kernels:
+//     * FFTStage     : fallback (no LDS), grid-stride loop
+//     * FFTStageLDS  : groupshared tiling over j in [0, N/2)
+// - Correct per-stage indexing rule (ESSENTIAL):
+//     write to idxD + r*Ns where Ns = 1<<s and r in {0,1}.
+// - Twiddle: Twiddle[r] = (cos(2πr/N), -sin(2πr/N)) for r=0..N/2-1  (inverse = conjugate)
+//
+// Notes:
+// * THREADS and TILE must match your C# driver.
+// * D3D11 TGSM (groupshared) size limit per group is 32 KiB; downlevel is 16 KiB.
+// * GroupMemoryBarrierWithGroupSync() is used after LDS loads; avoid calling it inside diverging branches.
+
+#pragma kernel FFTStage
+#pragma kernel FFTStageLDS
+#pragma kernel FFTLocal
+#pragma target 5.0
+
+// ----- Tunables (must match driver) -----
+#define THREADS 256
+#define TILE    1024
+
+// ----- Complex helpers -----
+inline float2 cadd(float2 a, float2 b) { return float2(a.x + b.x, a.y + b.y); }
+inline float2 csub(float2 a, float2 b) { return float2(a.x - b.x, a.y - b.y); }
+inline float2 cmul(float2 a, float2 b) { return float2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x); }
+
+// ----- Buffers -----
+RWStructuredBuffer<float2> Ping;
+RWStructuredBuffer<float2> Pong;
+StructuredBuffer<float2>   Twiddle;
+
+// ----- Parameters -----
+cbuffer FFTParams {
+    uint  N;                  // FFT length (power of two)
+    uint  BatchCount;         // number of batches
+    uint  Stages;             // log2(N) (not used by kernels but handy)
+    int   Direction;          // +1: forward, -1: inverse (conjugate twiddle)
+    uint  StageDynamic;       // current stage s
+    uint  ApplyScaleDynamic;  // if !=0 and Direction<0, scale outputs by 1/N (last inverse stage only)
+    uint  ThreadCount;        // total threads for grid-stride loop (fallback kernel)
+    float InvN;               // 1.0 / N
+}
+
+// ============================================================
+// Fallback kernel (no LDS). Robust and simple.
+// Grid-stride loop over j in [0, N/2) for all batches.
+// ============================================================
+[numthreads(THREADS,1,1)]
+void FFTStage(uint3 tid : SV_DispatchThreadID)
+{
+    const uint halfN = (N >> 1);
+    const uint total = BatchCount * halfN;
+
+    for (uint t = tid.x; t < total; t += ThreadCount)
+    {
+        // Per-batch j
+        const uint batch = t / halfN;
+        const uint j     = t - batch * halfN;       // j ∈ [0, N/2)
+
+        // Stage parameters
+        const uint Ns  = 1u << StageDynamic;        // 2^s
+        const uint N2  = Ns << 1;                   // 2^(s+1)
+        const uint k   = j & (Ns - 1u);             // j % Ns
+        const uint r   = k * (N / N2);              // twiddle index stride
+        const uint base = batch * N;
+
+        // Stockham load: take pair across halves
+        float2 a = Ping[base + j];
+        float2 b = Ping[base + j + halfN];
+
+        // Twiddle and butterfly
+        float2 w = Twiddle[r];
+        if (Direction < 0) w.y = -w.y;              // conjugate for inverse
+        float2 bw = cmul(b, w);
+
+        float2 S = cadd(a, bw);
+        float2 D = csub(a, bw);
+
+        if (ApplyScaleDynamic != 0 && Direction < 0) { S *= InvN; D *= InvN; }
+
+        // Stockham write: expand j by Ns (idxD), then offsets {0, Ns}
+        const uint g2   = j >> StageDynamic;        // j / Ns
+        const uint idxD = base + g2 * N2 + k;
+
+        Pong[idxD]      = S;                        // r = 0
+        Pong[idxD + Ns] = D;                        // r = 1  (NOT N/2!)
+    }
+}
+
+// ============================================================
+// LDS-tiled kernel.
+// Tiles j-range [0, N/2) in chunks of TILE elements per group.
+// Each group loads A(j) and B(j)=A(j+N/2) into LDS, then computes
+// the same Stockham butterfly and scatters to global.
+// ============================================================
+groupshared float2 shA[TILE];
+groupshared float2 shB[TILE];
+
+[numthreads(THREADS,1,1)]
+void FFTStageLDS(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
+{
+    const uint halfN = (N >> 1);
+
+    // Tile mapping across batches: cover j ∈ [0, N/2)
+    const uint tilesPerBatch = (halfN + TILE - 1) / TILE;
+    const uint totalTiles    = tilesPerBatch * BatchCount;
+
+    const uint g = gid.x;
+    if (g >= totalTiles) return;
+
+    const uint batch     = g / tilesPerBatch;
+    const uint tileIndex = g - batch * tilesPerBatch;
+
+    const uint jStart = tileIndex * TILE;
+    const uint jEnd   = min(jStart + TILE, halfN);
+    const uint base   = batch * N;
+
+    // Preload A(j) and B(j) into LDS
+    for (uint j = jStart + tid.x; j < jEnd; j += THREADS)
+    {
+        shA[j - jStart] = Ping[base + j];
+        shB[j - jStart] = Ping[base + j + halfN];
+    }
+    GroupMemoryBarrierWithGroupSync();              // all LDS loads visible
+
+    const uint  Ns      = 1u << StageDynamic;
+    const uint  N2      = Ns << 1;
+    const uint  stride  = N / N2;
+    const bool  doScale = (ApplyScaleDynamic != 0 && Direction < 0);
+
+    // Compute butterflies and scatter
+    for (uint j = jStart + tid.x; j < jEnd; j += THREADS)
+    {
+        const uint k = j & (Ns - 1u);
+        const uint r = k * stride;
+
+        float2 a = shA[j - jStart];
+        float2 b = shB[j - jStart];
+
+        float2 w = Twiddle[r];
+        if (Direction < 0) w.y = -w.y;
+
+        float2 bw = cmul(b, w);
+        float2 S  = cadd(a, bw);
+        float2 D  = csub(a, bw);
+        if (doScale) { S *= InvN; D *= InvN; }
+
+        const uint g2   = j >> StageDynamic;        // j / Ns
+        const uint idxD = base + g2 * N2 + k;
+
+        Pong[idxD]      = S;                        // r = 0
+        Pong[idxD + Ns] = D;                        // r = 1
+    }
+}
+
+// ============================================================
+// Local FFT kernel: ALL stages in one dispatch (N <= 2048).
+// Each thread group processes one batch's entire FFT in LDS.
+// Twiddle factors computed inline via sincos (no buffer read).
+// LDS: 2 x 2048 x 8 = 32 KiB (D3D11 SM5.0 TGSM limit).
+// ============================================================
+#define LOCAL_N 2048
+groupshared float2 locA[LOCAL_N];
+groupshared float2 locB[LOCAL_N];
+
+[numthreads(THREADS,1,1)]
+void FFTLocal(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
+{
+    const uint batch = gid.x;
+    const uint base  = batch * N;
+    const uint halfN = N >> 1;
+
+    // Load N elements from global into locA
+    for (uint i = tid.x; i < N; i += THREADS)
+        locA[i] = Ping[base + i];
+    GroupMemoryBarrierWithGroupSync();
+
+    const float twoPiOverN = 6.283185307f / (float)N;
+    bool readA = true;
+
+    // Process ALL stages in LDS
+    for (uint s = 0; s < Stages; s++)
+    {
+        const uint Ns     = 1u << s;
+        const uint N2     = Ns << 1;
+        const uint stride = N / N2;
+        const bool isLast = (s == Stages - 1u);
+
+        for (uint j = tid.x; j < halfN; j += THREADS)
+        {
+            const uint k = j & (Ns - 1u);
+            const uint r = k * stride;
+
+            float2 a, b;
+            if (readA) { a = locA[j]; b = locA[j + halfN]; }
+            else       { a = locB[j]; b = locB[j + halfN]; }
+
+            // Inline twiddle via sincos
+            float sn, cs;
+            sincos(twoPiOverN * r, sn, cs);
+            float2 w = float2(cs, Direction < 0 ? sn : -sn);
+
+            float2 bw = cmul(b, w);
+            float2 S  = cadd(a, bw);
+            float2 D  = csub(a, bw);
+
+            if (isLast && ApplyScaleDynamic != 0 && Direction < 0)
+            {
+                S *= InvN;
+                D *= InvN;
+            }
+
+            const uint g2   = j >> s;
+            const uint idxD = g2 * N2 + k;
+
+            if (readA) { locB[idxD] = S; locB[idxD + Ns] = D; }
+            else       { locA[idxD] = S; locA[idxD + Ns] = D; }
+        }
+
+        readA = !readA;
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    // Write final result from LDS to global Pong
+    for (uint i = tid.x; i < N; i += THREADS)
+        Pong[base + i] = readA ? locA[i] : locB[i];
+}

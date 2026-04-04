@@ -29,9 +29,4 @@ public class FFTTest
             .Run();
     }
 
-    [Test, Performance]
-    public void GpuTest()
-    {
-
-    }
 }

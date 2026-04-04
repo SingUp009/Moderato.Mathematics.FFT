@@ -426,6 +426,56 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1302895242
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1302895244}
+  - component: {fileID: 1302895245}
+  m_Layer: 0
+  m_Name: FFT_CPU_GPU_ParityTests
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1302895244
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1302895242}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1302895245
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1302895242}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e58e48d99d42af24792b88d28e84bf67, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  fftCS: {fileID: 7200000, guid: 974331b278499034f9eb82ad83f3501b, type: 3}
+  testSizes: 00040000001000000040000000000100
+  windows: 0000000002000000030000000400000005000000
+  randomSeed: 1234
+  alsoTestSine: 1
+  sineBin: 64
 --- !u!1 &1600335501
 GameObject:
   m_ObjectHideFlags: 0
@@ -444,7 +494,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1600335502
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -457,7 +507,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2c7a4a10e2957974d8aaa63827ac3e32, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  fftShader: {fileID: 7200000, guid: fea2d07211033894bb00e9513f365981, type: 3}
+  fftShader: {fileID: 7200000, guid: 974331b278499034f9eb82ad83f3501b, type: 3}
 --- !u!4 &1600335503
 Transform:
   m_ObjectHideFlags: 0
@@ -498,7 +548,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   clip: {fileID: 8300000, guid: 5b1013a7a5bf4674091e866eb5456ca4, type: 3}
-  fftShader: {fileID: 7200000, guid: fea2d07211033894bb00e9513f365981, type: 3}
+  fftShader: {fileID: 7200000, guid: 974331b278499034f9eb82ad83f3501b, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -507,3 +557,4 @@ SceneRoots:
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 1600335503}
+  - {fileID: 1302895244}

@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Globalization;
 using System.Linq;
+using Moderato.Mathematics;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -13,7 +14,7 @@ public class GPUFFT_TestSuite
 
     ComputeShader _cs;
 
-    int _kLDS, _kStage;
+    int _kLDS, _kStage, _kLocal;
 
     [OneTimeSetUp]
     public void OneTimeSetup()
@@ -22,7 +23,9 @@ public class GPUFFT_TestSuite
         Assert.IsNotNull(_cs, "ComputeShader 'Resources/StockhamFFT_Tiled.compute' not found.");
         _kLDS = _cs.FindKernel("FFTStageLDS");
         _kStage = _cs.FindKernel("FFTStage");
+        _kLocal = _cs.FindKernel("FFTLocal");
         Assert.That(_kLDS >= 0 && _kStage >= 0, "Kernels FFTStageLDS/FFTStage not found.");
+        Assert.That(_kLocal >= 0, "Kernel FFTLocal not found.");
     }
 
     // ======= Small helpers =======
@@ -118,7 +121,7 @@ public class GPUFFT_TestSuite
 
     Vector2[] RunGPUForward(Vector2[] input, int N, int batches, ExecMode mode)
     {
-        int stages = (int)Mathf.Log(N, 2);
+        int stages = 0; for (int t = N; t > 1; t >>= 1) stages++;
 
         using var bufPing = new ComputeBuffer(N * batches, sizeof(float) * 2);
         using var bufPong = new ComputeBuffer(N * batches, sizeof(float) * 2);
@@ -190,7 +193,7 @@ public class GPUFFT_TestSuite
 
     Vector2[] RunGPUInverse(Vector2[] spec, int N, int batches, ExecMode mode)
     {
-        int stages = (int)Mathf.Log(N, 2);
+        int stages = 0; for (int t = N; t > 1; t >>= 1) stages++;
 
         using var bufPing = new ComputeBuffer(N * batches, sizeof(float) * 2);
         using var bufPong = new ComputeBuffer(N * batches, sizeof(float) * 2);
@@ -367,5 +370,121 @@ public class GPUFFT_TestSuite
                     Assert.Less(Mathf.Abs(Xfb[i].y - Xlds[i].y), 1e-4f, $"imag mismatch @ {i} (N={N},B={batches})");
                 }
             }
+    }
+
+    // ======= FFTLocal (single-dispatch) tests via FFT_GPU driver =======
+
+    [Test]
+    public void FFTLocal_vs_MultiDispatch_Parity()
+    {
+        // Compare FFTLocal (via FFT_GPU driver, N<=2048) against multi-dispatch fallback
+        foreach (var N in new[] { 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048 })
+            foreach (var batches in new[] { 1, 4 })
+            {
+                var x = MakeRandomComplex(N, batches, 0.5f);
+
+                // Multi-dispatch reference (fallback only)
+                var Xref = RunGPUForward(x, N, batches, ExecMode.FallbackOnly);
+
+                // FFTLocal via FFT_GPU driver (automatically selects FFTLocal for N<=1024)
+                using var fft = new FFT_GPU(_cs, N, batches);
+                fft.SetData(x);
+                fft.Forward();
+                var Xlocal = new Vector2[N * batches];
+                fft.GetResult(Xlocal);
+
+                float rmse = RMSE(Xref, Xlocal);
+                Assert.Less(rmse, 1e-4f, $"FFTLocal vs Fallback RMSE={rmse} @ N={N},B={batches}");
+            }
+    }
+
+    [Test]
+    public void FFTLocal_Inverse_Reconstructs()
+    {
+        foreach (var N in new[] { 8, 64, 256, 512, 1024, 2048 })
+        {
+            var xr = MakeRandomReal(N, 1, 0.5f);
+            using var fft = new FFT_GPU(_cs, N, 1);
+            fft.SetData(xr);
+            fft.Forward();
+
+            // Read spectrum then feed back for inverse
+            var spec = new Vector2[N];
+            fft.GetResult(spec);
+
+            fft.SetData(spec);
+            fft.Inverse(true);
+            var yr = new Vector2[N];
+            fft.GetResult(yr);
+
+            Assert.Less(RMSE(xr, yr), 3e-5f, $"FFTLocal inverse RMSE @ N={N}");
+        }
+    }
+
+    [Test]
+    public void FFTLocal_PureTone_SinglePeak()
+    {
+        foreach (var N in new[] { 64, 256, 512, 1024, 2048 })
+        {
+            int bin = 7;
+            var x = MakeSineReal(N, 1, bin, 1f);
+            using var fft = new FFT_GPU(_cs, N, 1);
+            fft.SetData(x);
+            fft.Forward();
+            var X = new Vector2[N];
+            fft.GetResult(X);
+            var amp = ToSingleSidedAmplitude(X, N, 1, 0);
+
+            Assert.That(amp[bin], Is.InRange(0.999f, 1.001f), $"FFTLocal peak @ bin={bin}, N={N}");
+            float maxLeak = amp.Where((v, k) => k != 0 && k != N / 2 && k != bin).DefaultIfEmpty(0f).Max();
+            Assert.Less(maxLeak, 1e-3f, $"FFTLocal leakage @ N={N}");
+        }
+    }
+
+    [Test]
+    public void FFTLocal_CachedCommandBuffer_Matches_Direct()
+    {
+        foreach (var N in new[] { 256, 1024, 2048 })
+        {
+            var x = MakeRandomComplex(N, 1, 0.5f);
+
+            using var fft = new FFT_GPU(_cs, N, 1);
+
+            // Direct path
+            fft.SetData(x);
+            fft.Forward();
+            var Xdirect = new Vector2[N];
+            fft.GetResult(Xdirect);
+
+            // Cached path
+            fft.SetData(x);
+            fft.ForwardCached();
+            var Xcached = new Vector2[N];
+            fft.GetResult(Xcached);
+
+            Assert.Less(RMSE(Xdirect, Xcached), 1e-6f, $"Cached vs Direct mismatch @ N={N}");
+        }
+    }
+
+    [Test]
+    public void CommandBuffer_Cached_LargeN_Matches_Direct()
+    {
+        // Test CommandBuffer caching for multi-dispatch path (N > 2048)
+        int N = 4096;
+        var x = MakeRandomComplex(N, 1, 0.5f);
+
+        using var fft = new FFT_GPU(_cs, N, 1);
+
+        fft.SetData(x);
+        fft.Forward();
+        var Xdirect = new Vector2[N];
+        fft.GetResult(Xdirect);
+
+        fft.SetData(x);
+        fft.ForwardCached();
+        var Xcached = new Vector2[N];
+        fft.GetResult(Xcached);
+
+        Assert.Less(RMSE(Xdirect, Xcached), 1e-6f, "Cached vs Direct mismatch @ N=4096");
     }
 }
