@@ -1,0 +1,79 @@
+// CQT_Project.compute (fixed)
+// - No early return before barrier
+// - Uniform control around GroupMemoryBarrierWithGroupSync
+// - Uses GroupID * THREADS + GroupThreadID for bin index
+
+#pragma kernel CQTProjectOctave
+#pragma target 5.0
+
+#define THREADS 256
+#define LDS_MAX 4096
+
+StructuredBuffer<float2> XSlice;   // length = L
+StructuredBuffer<float2> Kernels;  // length = L * B (pre-conjugated spectra)
+RWStructuredBuffer<float2> Coefs;  // length = B
+
+cbuffer CQTParams {
+    uint L;    // FFT size for this octave
+    uint B;    // bins in this octave
+    uint KBase;// (unused here)
+}
+
+groupshared float2 shX[LDS_MAX];
+
+inline float2 cmadd(float2 acc, float2 x, float2 h)
+{
+    // acc += x * h  (complex MAC)
+    acc.x += x.x*h.x - x.y*h.y;
+    acc.y += x.x*h.y + x.y*h.x;
+    return acc;
+}
+
+[numthreads(THREADS,1,1)]
+void CQTProjectOctave(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
+{
+    const uint k = gid.x * THREADS + tid.x;    // bin index handled by this thread
+    const bool active = (k < B);
+    const bool useLDS = (L <= LDS_MAX);
+
+    // Uniform path: if we use LDS, EVERY thread loads and hits the barrier
+    if (useLDS)
+    {
+        // cooperative load of X into shared memory
+        for (uint f = tid.x; f < L; f += THREADS)
+            shX[f] = XSlice[f];
+
+        // All threads in the group must reach this barrier (uniform flow)
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    // Do the dot product only if this thread maps to a valid bin
+    if (active)
+    {
+        float2 acc = float2(0,0);
+        const uint base = k * L;
+
+        if (useLDS)
+        {
+            // Read from LDS (fast)
+            [loop] for (uint f=0; f<L; ++f)
+            {
+                float2 x = shX[f];
+                float2 h = Kernels[base + f];
+                acc = cmadd(acc, x, h);
+            }
+        }
+        else
+        {
+            // Fallback: read X directly from global memory (no barrier needed)
+            [loop] for (uint f=0; f<L; ++f)
+            {
+                float2 x = XSlice[f];
+                float2 h = Kernels[base + f];
+                acc = cmadd(acc, x, h);
+            }
+        }
+
+        Coefs[k] = acc; // safe: active == true => k < B
+    }
+}
